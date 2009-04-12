@@ -1,0 +1,9 @@
+-------------
+Version 0.1.1
+-------------
+NEW: Added cookies support (Porcupine 0.0.7 or later).
+
+-------------
+Version 0.1.0
+-------------
+Initial stable release.
