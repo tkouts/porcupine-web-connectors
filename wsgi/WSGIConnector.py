@@ -1,30 +1,39 @@
 "Porcupine WSGI connector"
 
-import socket, sys, ConfigParser, os, urllib
+import socket
+import sys
+import ConfigParser
+import os
+import urllib
+import re
 from errno import EISCONN, EADDRINUSE
 from threading import RLock
 from cPickle import dumps, loads
 
 BUFSIZ = 8*1024
-HTMLCodes = [
-    ['&', '&amp;'],
-    ['<', '&lt;'],
-    ['>', '&gt;'],
-    ['"', '&quot;'],
-]
+HTMLCodes = (('&', '&amp;'),
+             ('<', '&lt;'),
+             ('>', '&gt;'),
+             ('"', '&quot;'))
 IP_ADDR = socket.gethostbyname(socket.gethostname())
+MOBILE_BROWSER_SIGNATURE = re.compile('PMB|UNTRUSTED')
 PORT_RANGE = range(65535, 40958, -1)
 NEXT_HOST_LOCK = RLock()
-ERROR_PAGE = '''<html><body>
-<H3>Porcupine Server</H3>
-<p>
-<pre>
+ERROR_PAGE = '''<html><body><H3>Porcupine Server</H3><p><pre>
 ERROR
 
 %s
 </pre>
 </p>
 </body></html>'''
+
+HTTP_CODES = {200: '200 OK',
+              302: '302 Found',
+              304: '304 Not Modified',
+              404: '404 Not Found',
+              403: '403 Forbidden',
+              500: '500 Internal Server Error',
+              501: '501 Not Implemented'}
 
 class Host(object):
     def __init__(self, address):
@@ -77,21 +86,52 @@ class WSGIConnector:
         self.environment = environ
         self.start = start_response
 
-    def HTMLEncode(s, codes=HTMLCodes):
+    def HTMLEncode(self, s, codes=HTMLCodes):
         for code in codes:
             s = s.replace(code[0], code[1])
         return s
         
     def __iter__(self):
-
-        status = '200 OK'
         response_headers = []
         response_body = ''
+        
+        length = 0
+        if self.environment["CONTENT_LENGTH"]:
+            length = int(self.environment["CONTENT_LENGTH"])
 
-        length = int('0' + self.environment["CONTENT_LENGTH"])
+        #print self.environment['HTTP_USER_AGENT']
         
         errors = self.environment.pop('wsgi.errors')
-        input = '' + self.environment.pop('wsgi.input').read(length)
+        
+        if self.environment.has_key('wsgi.input'):
+            wsgi_input = self.environment.pop('wsgi.input')
+            if length > 0:
+                input = wsgi_input.read(length)
+            else:
+                # chunked request
+                input = []
+                
+                if self.environment.has_key('HTTP_TRANSFER_ENCODING') and \
+                        self.environment['HTTP_TRANSFER_ENCODING'] == 'chunked':
+                    chunk_size = int('0x' + wsgi_input.readline(), 16)
+                    
+                    while chunk_size > 0:
+                        char = wsgi_input.read(1)
+                        while char in '\r\n':
+                            char = wsgi_input.read(1)    
+    
+                        input.append(char)
+                        input.append(wsgi_input.read(chunk_size - 1))
+                        
+                        char = wsgi_input.read(1)
+                        while char in '\r\n':
+                            char = wsgi_input.read(1) 
+                        
+                        chunk_size = int('0x' + char + wsgi_input.readline(), 16)
+                
+                input = ''.join(input)
+        else:
+            input = ''
 
         self.environment["PATH_INFO"] = urllib.unquote(self.environment["PATH_INFO"])
 
@@ -100,7 +140,7 @@ class WSGIConnector:
             'env': self.environment,
             'inp': input
         }
-        data = dumps(dict)
+        data = dumps(dict, 2)
         
         try:
             while True:
@@ -142,34 +182,56 @@ class WSGIConnector:
                     s.close()
                     host.connections -= 1
 
-            tplResponse = tuple( response.split('\n\n---END BODY---\n\n') )
-            headers = loads(tplResponse[1])
-    
-            if not(headers.has_key('Location')):
-                # it is not a redirect
+            ret_code, body, headers, cookies = loads(response)
+            
+            if not headers.has_key('Location'):
                 for header in headers.items():
                     response_headers.append(header)
-
-                #cookies
-                if len(tplResponse) > 2:
-                    cookies = loads(tplResponse[2])
-                    for cookie in cookies:
-                        response_headers.append( ('Set-Cookie', cookie) )
-    
-                response_body = tplResponse[0]
+                for cookie in cookies:
+                    response_headers.append(('Set-Cookie', cookie))
             else:
                 # it is a redirect
-                response_headers.append( ('Location', headers['Location']) )
-                status = '302 Found'
-        
+                if MOBILE_BROWSER_SIGNATURE.search(
+                        self.environment['HTTP_USER_AGENT']):
+                    # it is a mobile device
+                    # handle redirect internally
+                    url_scheme = self.environment['wsgi.url_scheme']
+                    sLocation = headers['Location']
+                    if sLocation[:len(url_scheme)] != url_scheme:
+                        sLocation = url_scheme + '://' + \
+                                    self.environment['HTTP_HOST'] + sLocation
+                        
+                    sHost = self.environment['HTTP_HOST'] + \
+                            self.environment['SCRIPT_NAME']
+					
+                    lstPath = sLocation[
+                        sLocation.index(sHost) + len(sHost):].split('?')
+                    
+                    self.environment['PATH_INFO'] = lstPath[0]
+                    
+                    if len(lstPath)==2:
+                        self.environment['QUERY_STRING'] = lstPath[1]
+                    else:
+                        self.environment['QUERY_STRING'] = ''
+                        
+                    self.environment['wsgi.errors'] = errors
+                    
+                    conn = WSGIConnector(self.environment, self.start)
+                    for r in iter(conn):
+                        yield r
+                    return
+                else:
+                    # it is a redirect
+                    response_headers.append( ('Location', headers['Location']) )
+                
         except socket.error, e:
             import traceback
             output = traceback.format_exception(*sys.exc_info())
             output = ''.join(output)
             errors.write(output)
-            status = '503 Service Temporarily Unavailable'
+            ret_code = 503
             response_headers = [('Content-Type', 'text/html')]
-            response_body = ERROR_PAGE % 'Service Temporarily Unavailable'
+            body = ERROR_PAGE % 'Service Temporarily Unavailable'
 
         except:
             import traceback
@@ -177,12 +239,12 @@ class WSGIConnector:
             output = ''.join(output)
             output = self.HTMLEncode(output)
             errors.write(output)
+            ret_code = 500
             response_headers = [('Content-Type', 'text/html')]
-            response_body = ERROR_PAGE % output
+            body = ERROR_PAGE % output
 
-        response_headers.append( ('Content-Length', str(len(response_body))) )
+        response_headers.append( ('Content-Length', str(len(body))) )
 
-        self.start(status, response_headers)
-        yield response_body
-
-
+        self.start(HTTP_CODES[ret_code], response_headers)
+        
+        yield body

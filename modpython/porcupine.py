@@ -1,6 +1,7 @@
 "Porcupine MOD_PYTHON connector"
 
 import socket, sys, ConfigParser, os
+import re
 from errno import EISCONN, EADDRINUSE
 from threading import RLock
 from cPickle import dumps, loads
@@ -14,9 +15,10 @@ HTMLCodes = [
     ['"', '&quot;'],
 ]
 IP_ADDR = socket.gethostbyname(socket.gethostname())
+MOBILE_BROWSER_SIGNATURE = re.compile('MIDP|UNTRUSTED')
 PORT_RANGE = range(65535, 40958, -1)
 NEXT_HOST_LOCK = RLock()
-#WEB_LOG = open('web.log', 'w+')
+#WEB_LOG = open('C:/www/web.log', 'w+')
 
 class Host(object):
     def __init__(self, address):
@@ -76,13 +78,17 @@ inifile = os.path.dirname(__file__) + '/server.ini'
 SITE.populate(inifile)
 
 def handler(req):
-    try:
-        req.add_common_vars()
-        # construct the environment dictionary
-        environ = {}
-        for sVar in req.subprocess_env.keys():
-            environ[sVar] = req.subprocess_env[sVar]
+    req.add_common_vars()
+    # construct the environment dictionary
+    environ = {}
+    for sVar in req.subprocess_env.keys():
+        environ[sVar] = req.subprocess_env[sVar]
 
+    return handleRequest(req, environ)            
+
+
+def handleRequest(req, environ):
+    try:
         # get input
         requestBody = req.read()
         dict = {
@@ -90,7 +96,7 @@ def handler(req):
             'env': environ,
             'inp': requestBody
         }
-        data = dumps(dict)
+        data = dumps(dict, 2)
 
         while True:
             hosts = SITE.getNextHost()
@@ -135,40 +141,44 @@ def handler(req):
                 #WEB_LOG.write('closing connection for host %s. Total conns:%d\n' %(host.address, host.tot))
                 #WEB_LOG.flush()
 
-        tplResponse = tuple( response.split('\n\n---END BODY---\n\n') )
-        headers = loads(tplResponse[1])
-
-        if not(headers.has_key('Location')):
+        ret_code, body, headers, cookies = loads(response)
+        req.status = ret_code
+        
+        if not headers.has_key('Location'):
             # it is not a redirect
-            #cookies
-            if len(tplResponse) > 2:
-                cookies = loads(tplResponse[2])
-                for cookie in cookies:
-                    req.headers_out.add('Set-Cookie', cookie) 
-
             req.content_type = headers.pop('Content-Type')
-            req.headers_out['Content-Length'] = str(len(tplResponse[0]))
+            req.headers_out['Content-Length'] = str(len(body))
+            for cookie in cookies:
+                req.headers_out.add('Set-Cookie', cookie)
             for header in headers:
                 req.headers_out[header] = headers[header]
-
             req.send_http_header()
-            
-            req.write(tplResponse[0])
-            retVal = apache.OK
+            req.write(body)
         else:
             # it is a redirect
-            req.headers_out['Location'] = headers['Location']
-            req.send_http_header()
-            retVal = apache.HTTP_MOVED_TEMPORARILY
-
-        return retVal
+            if MOBILE_BROWSER_SIGNATURE.search( environ['HTTP_USER_AGENT'] ):
+                # it is a mobile device
+                # handle redirect internally
+                sLocation = headers['Location']
+                sScriptName = environ['SCRIPT_NAME']
+                
+                lstPath = sLocation[
+                    sLocation.index(sScriptName) + len(sScriptName):].split('?')
+                
+                environ['PATH_INFO'] = lstPath[0]
+                if len(lstPath)==2:
+                    environ['QUERY_STRING'] = lstPath[1]
+                return handleRequest(req, environ) 
+            else:                
+                req.headers_out['Location'] = headers['Location']
+                req.send_http_header()
+        
+        return apache.OK
 
     except socket.error, e:
         import traceback
         output = traceback.format_exception(*sys.exc_info())
         output = ''.join(output)
-#        WEB_LOG.write(output)
-#        WEB_LOG.flush()
         return apache.HTTP_SERVICE_UNAVAILABLE
 
     except:
