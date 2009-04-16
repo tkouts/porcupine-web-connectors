@@ -1,11 +1,11 @@
 "Porcupine WSGI connector"
-
 import socket
 import sys
 import ConfigParser
 import os
 import urllib
 import re
+import itertools
 from errno import EISCONN, EADDRINUSE
 from threading import RLock
 from cPickle import dumps, loads
@@ -16,16 +16,19 @@ HTMLCodes = (('&', '&amp;'),
              ('>', '&gt;'),
              ('"', '&quot;'))
 IP_ADDR = socket.gethostbyname(socket.gethostname())
-MOBILE_BROWSER_SIGNATURE = re.compile('PMB|UNTRUSTED')
-PORT_RANGE = range(65535, 40958, -1)
-NEXT_HOST_LOCK = RLock()
-ERROR_PAGE = '''<html><body><H3>Porcupine Server</H3><p><pre>
-ERROR
+MOBILE_BROWSER_SIGNATURE = re.compile('MIDP|UNTRUSTED')
+ERROR_PAGE = '''<html>
+    <body>
+        <H3>Porcupine Server</H3>
+        <p>
+            <pre>
+                ERROR
 
-%s
-</pre>
-</p>
-</body></html>'''
+                %s
+            </pre>
+        </p>
+    </body>
+</html>'''
 
 HTTP_CODES = {200: '200 OK',
               302: '302 Found',
@@ -33,21 +36,20 @@ HTTP_CODES = {200: '200 OK',
               404: '404 Not Found',
               403: '403 Forbidden',
               500: '500 Internal Server Error',
-              501: '501 Not Implemented'}
+              501: '501 Not Implemented',
+              503: '503 Service Temporarily Unavailable'}
 
 class Host(object):
+    port = itertools.cycle(range(65535, 40958, -1))
+    
     def __init__(self, address):
         self.address = address
         self.connections = 0
         self.tot = 0
-        self.port = self.getPort()
-
-    def getPort(self):
-        while True:
-            for port in PORT_RANGE:
-                yield(port)
 
 class Site(object):
+    _lock = RLock()
+    
     def __init__(self):
         self.isPopulated = False
 
@@ -71,19 +73,26 @@ class Site(object):
         return tuple(address)
         
     def getNextHost(self):
-        # round robin
-        NEXT_HOST_LOCK.acquire()
-        next = self.__rrcounter = (self.__rrcounter + 1) % len(self.__hosts)
-        NEXT_HOST_LOCK.release()
-        return self.__hosts[next:] + self.__hosts[0:next]
+        if len(self.__hosts) == 1:
+            return self.__hosts
+        else:
+            # round robin
+            self._lock.acquire()
+            next = self.__rrcounter = (self.__rrcounter + 1) % len(self.__hosts)
+            self._lock.release()
+            return self.__hosts[next:] + self.__hosts[0:next]
     
 SITE=Site()
 inifile = os.path.dirname(__file__) + '/server.ini'
 SITE.populate(inifile)
 
+def application(environ, start_response):
+    conn = WSGIConnector(environ, start_response)
+    return [r for r in conn]
+
 class WSGIConnector:
     def __init__(self, environ, start_response):
-        self.environment = environ
+        self.environment =  environ
         self.start = start_response
 
     def HTMLEncode(self, s, codes=HTMLCodes):
@@ -94,94 +103,81 @@ class WSGIConnector:
     def __iter__(self):
         response_headers = []
         response_body = ''
-        
         length = 0
-        if self.environment["CONTENT_LENGTH"]:
+        if self.environment.has_key("CONTENT_LENGTH") and self.environment["CONTENT_LENGTH"]:
             length = int(self.environment["CONTENT_LENGTH"])
-
-        #print self.environment['HTTP_USER_AGENT']
-        
         errors = self.environment.pop('wsgi.errors')
         
-        if self.environment.has_key('wsgi.input'):
-            wsgi_input = self.environment.pop('wsgi.input')
-            if length > 0:
-                input = wsgi_input.read(length)
+        try:        
+            if self.environment.has_key('wsgi.input'):
+                wsgi_input = self.environment.pop('wsgi.input')
+                if length > 0:
+                    input = wsgi_input.read(length)
+                else:
+                    # chunked request
+                    input = []
+                    if self.environment.has_key('HTTP_TRANSFER_ENCODING') and \
+                            self.environment['HTTP_TRANSFER_ENCODING'] == 'chunked':
+                        chunk_size = int('0x' + wsgi_input.readline(), 16)
+                        
+                        while chunk_size > 0:
+                            char = wsgi_input.read(1)
+                            while char in '\r\n':
+                                char = wsgi_input.read(1)
+                            input.append(char)
+                            input.append(wsgi_input.read(chunk_size - 1))
+                            char = wsgi_input.read(1)
+                            while char in '\r\n':
+                                char = wsgi_input.read(1) 
+                            chunk_size = int('0x' + char + wsgi_input.readline(), 16)
+                    input = ''.join(input)
             else:
-                # chunked request
-                input = []
-                
-                if self.environment.has_key('HTTP_TRANSFER_ENCODING') and \
-                        self.environment['HTTP_TRANSFER_ENCODING'] == 'chunked':
-                    chunk_size = int('0x' + wsgi_input.readline(), 16)
-                    
-                    while chunk_size > 0:
-                        char = wsgi_input.read(1)
-                        while char in '\r\n':
-                            char = wsgi_input.read(1)    
-    
-                        input.append(char)
-                        input.append(wsgi_input.read(chunk_size - 1))
-                        
-                        char = wsgi_input.read(1)
-                        while char in '\r\n':
-                            char = wsgi_input.read(1) 
-                        
-                        chunk_size = int('0x' + char + wsgi_input.readline(), 16)
-                
-                input = ''.join(input)
-        else:
-            input = ''
+                input = ''
 
-        self.environment["PATH_INFO"] = urllib.unquote(self.environment["PATH_INFO"])
-
-        dict = {
-            'if': 'WSGI',
-            'env': self.environment,
-            'inp': input
-        }
-        data = dumps(dict, 2)
-        
-        try:
-            while True:
-                hosts = SITE.getNextHost()
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                try:
-                    for host in hosts:
-                        err = s.connect_ex(host.address)
-                        while not err in (0, EISCONN):
-                            if err == EADDRINUSE:  # address already in use
-                                # the ephemeral port range is exhausted
-                                s.close()
-                                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                                s.bind((IP_ADDR, host.port.next()))
-                            else:
-                                # the host refuses conncetion
-                                break
-                            err = s.connect_ex(host.address)
+            if self.environment.has_key('wsgi.file_wrapper'):
+                del self.environment['wsgi.file_wrapper']
+            self.environment["PATH_INFO"] = urllib.unquote(self.environment["PATH_INFO"])
+            dct = {'if': 'WSGI',
+                   'env': self.environment,
+                   'inp': input}
+            data = dumps(dct, 2)
+            hosts = SITE.getNextHost()
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                response = []
+                for host in hosts:
+                    err = s.connect_ex(host.address)
+                    while not err in (0, EISCONN):
+                        if err == EADDRINUSE:  # address already in use
+                            # the ephemeral port range is exhausted
+                            s.close()
+                            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            s.bind((IP_ADDR, host.port.next()))
                         else:
-                            # we got a connection
-                            host.connections += 1
-                            host.tot += 1
+                            # the host refuses conncetion
                             break
-    
-                    # Send our request to Porcupine Server
-                    s.send(data)
-                    s.shutdown(1)
-    
-                    # Get the response object from Porcupine Server
-                    response = []
-                    while True:
-                        rdata = s.recv(BUFSIZ)
-                        if not rdata:
-                            response = ''.join(response)
-                            break
-                        response.append(rdata)
-                    break
-                finally:
-                    s.close()
-                    host.connections -= 1
+                        err = s.connect_ex(host.address)
+                    else:
+                        # we got a connection
+                        host.connections += 1
+                        host.tot += 1
+                        break
 
+                # Send our request to Porcupine Server
+                s.send(data)
+                s.shutdown(1)
+
+                # Get the response object from Porcupine Server
+                while True:
+                    rdata = s.recv(BUFSIZ)
+                    if not rdata:
+                        break
+                    response.append(rdata)
+            finally:
+                s.close()
+                host.connections -= 1
+
+            response = ''.join(response)
             ret_code, body, headers, cookies = loads(response)
             
             if not headers.has_key('Location'):
@@ -200,29 +196,24 @@ class WSGIConnector:
                     if sLocation[:len(url_scheme)] != url_scheme:
                         sLocation = url_scheme + '://' + \
                                     self.environment['HTTP_HOST'] + sLocation
-                        
+                    
                     sHost = self.environment['HTTP_HOST'] + \
                             self.environment['SCRIPT_NAME']
-					
-                    lstPath = sLocation[
-                        sLocation.index(sHost) + len(sHost):].split('?')
+                    lstPath = sLocation[sLocation.index(sHost) +
+                                        len(sHost):].split('?')
                     
                     self.environment['PATH_INFO'] = lstPath[0]
-                    
                     if len(lstPath)==2:
                         self.environment['QUERY_STRING'] = lstPath[1]
                     else:
                         self.environment['QUERY_STRING'] = ''
-                        
                     self.environment['wsgi.errors'] = errors
-                    
                     conn = WSGIConnector(self.environment, self.start)
                     for r in iter(conn):
                         yield r
                     return
                 else:
-                    # it is a redirect
-                    response_headers.append( ('Location', headers['Location']) )
+                    response_headers.append(('Location', headers['Location']))
                 
         except socket.error, e:
             import traceback
@@ -243,8 +234,6 @@ class WSGIConnector:
             response_headers = [('Content-Type', 'text/html')]
             body = ERROR_PAGE % output
 
-        response_headers.append( ('Content-Length', str(len(body))) )
-
+        response_headers.append(('Content-Length', str(len(body))))
         self.start(HTTP_CODES[ret_code], response_headers)
-        
         yield body
