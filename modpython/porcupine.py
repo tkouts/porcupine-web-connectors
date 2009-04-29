@@ -16,7 +16,7 @@ HTMLCodes = (('&', '&amp;'),
              ('>', '&gt;'),
              ('"', '&quot;'))
 IP_ADDR = socket.gethostbyname(socket.gethostname())
-MOBILE_BROWSER_SIGNATURE = re.compile('MIDP|UNTRUSTED')
+MOBILE_BROWSER_SIGNATURE = re.compile('PMB|UNTRUSTED')
 #WEB_LOG = open('C:/www/web.log', 'w+')
 
 class Host(object):

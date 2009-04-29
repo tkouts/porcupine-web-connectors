@@ -16,7 +16,7 @@ HTMLCodes = (('&', '&amp;'),
              ('>', '&gt;'),
              ('"', '&quot;'))
 IP_ADDR = socket.gethostbyname(socket.gethostname())
-MOBILE_BROWSER_SIGNATURE = re.compile('MIDP|UNTRUSTED')
+MOBILE_BROWSER_SIGNATURE = re.compile('PMB|UNTRUSTED')
 ERROR_PAGE = '''<html>
     <body>
         <H3>Porcupine Server</H3>
