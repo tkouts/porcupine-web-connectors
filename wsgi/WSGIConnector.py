@@ -6,6 +6,7 @@ import os
 import urllib
 import re
 import itertools
+import httplib
 from errno import EISCONN, EADDRINUSE
 from threading import RLock
 from cPickle import dumps, loads
@@ -29,15 +30,6 @@ ERROR_PAGE = '''<html>
         </p>
     </body>
 </html>'''
-
-HTTP_CODES = {200: '200 OK',
-              302: '302 Found',
-              304: '304 Not Modified',
-              404: '404 Not Found',
-              403: '403 Forbidden',
-              500: '500 Internal Server Error',
-              501: '501 Not Implemented',
-              503: '503 Service Temporarily Unavailable'}
 
 class Host(object):
     port = itertools.cycle(range(65535, 40958, -1))
@@ -235,5 +227,6 @@ class WSGIConnector:
             body = ERROR_PAGE % output
 
         response_headers.append(('Content-Length', str(len(body))))
-        self.start(HTTP_CODES[ret_code], response_headers)
+        self.start('%d %s' % (ret_code, httplib.responses[ret_code]),
+                   response_headers)
         yield body
