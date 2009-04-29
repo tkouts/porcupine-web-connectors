@@ -18,9 +18,8 @@
 
 import sys
 import os
-import cgi
 import socket
-from cPickle import dumps, loads
+from cPickle import dumps
 from ConfigParser import RawConfigParser
 
 def getAddressFromString(sAddress):
