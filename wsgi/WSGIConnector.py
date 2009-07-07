@@ -94,7 +94,6 @@ class WSGIConnector:
         
     def __iter__(self):
         response_headers = []
-        response_body = ''
         length = 0
         if self.environment.has_key("CONTENT_LENGTH") and self.environment["CONTENT_LENGTH"]:
             length = int(self.environment["CONTENT_LENGTH"])
@@ -207,7 +206,7 @@ class WSGIConnector:
                 else:
                     response_headers.append(('Location', headers['Location']))
                 
-        except socket.error, e:
+        except socket.error:
             import traceback
             output = traceback.format_exception(*sys.exc_info())
             output = ''.join(output)

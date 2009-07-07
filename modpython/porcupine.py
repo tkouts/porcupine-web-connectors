@@ -164,7 +164,7 @@ def handleRequest(req, environ):
         
         return apache.OK
 
-    except socket.error, e:
+    except socket.error:
         import traceback
         output = traceback.format_exception(*sys.exc_info())
         output = ''.join(output)
