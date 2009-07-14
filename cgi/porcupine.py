@@ -1,5 +1,5 @@
 #===============================================================================
-#    Copyright 2005, Tassos Koutsovassilis
+#    Copyright 2005-2009, Tassos Koutsovassilis
 #
 #    This file is part of Porcupine.
 #    Porcupine is free software; you can redistribute it and/or modify
@@ -15,7 +15,6 @@
 #    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #===============================================================================
 "Porcupine CGI connector"
-
 import sys
 import os
 import socket
@@ -33,12 +32,10 @@ hosts = config.get('config', 'hosts')
 hosts = hosts.split(',')
 ADDR = getAddressFromString(hosts[0])
 BUFSIZ = 8192
-HTMLCodes = [
-    ['&', '&amp;'],
-    ['<', '&lt;'],
-    ['>', '&gt;'],
-    ['"', '&quot;']
-]
+HTMLCodes = (('&', '&amp;'),
+             ('<', '&lt;'),
+             ('>', '&gt;'),
+             ('"', '&quot;'))
 
 def getResponse():
     try:
@@ -54,18 +51,16 @@ def getResponse():
                 requestBody = sys.stdin.read(length)
         dict = {
             'if': 'CGI',
-			'env': os.environ.data,
-			'inp': requestBody
-		}
-        # Send our request to Porcupine Server
+            'env': os.environ.data,
+            'inp': requestBody
+	}
+        # send the request to Porcupine Server
         data = dumps(dict)
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect(ADDR)
-        ##s.send(dumps(int(len(data))))
         s.send(data)
-        #s.send(myInput)
         s.shutdown(1)
-        # Get the response from Porcupine Server
+        # get the response
         while 1:
             rdata = s.recv(BUFSIZ)
             if not rdata:
