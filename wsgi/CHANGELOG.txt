@@ -2,12 +2,8 @@
 Version 0.2.0
 -------------
 NEW: Compatibility with Porcupine 0.6
+NEW: Added support for mod_wsgi
 NEW: Added support for Porcupine mobile browser
-
--------------
-Version 0.1.1
--------------
-NEW: Added cookies support (Porcupine 0.0.7 or later).
 
 -------------
 Version 0.1.0

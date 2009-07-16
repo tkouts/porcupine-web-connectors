@@ -1,0 +1,15 @@
+-------------
+Version 0.2.0
+-------------
+NEW: Compatibility with Porcupine 0.6
+NEW: The win32 executable is built with Python 2.6.1
+
+-------------
+Version 0.1.0
+-------------
+NEW: The win32 executable is built with Python 2.4
+
+-------------
+Version 0.0.2
+-------------
+Initial release.
