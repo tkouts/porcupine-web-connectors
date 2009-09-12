@@ -17,15 +17,37 @@
 "Porcupine WSGI connector"
 import socket
 import sys
-import ConfigParser
-import os
-import urllib
 import re
 import itertools
-import httplib
 from errno import EISCONN, EADDRINUSE
 from threading import RLock
-from cPickle import dumps, loads
+
+try:
+    # python 2.6
+    import ConfigParser as configparser
+except ImportError:
+    import configparser
+import os
+
+try:
+    # python 2.6
+    import urlparse
+except ImportError:
+    # python 3
+    import urllib.parse as urlparse
+
+try:
+    # python 2.6
+    import httplib
+except ImportError:
+    import http.client as httplib
+
+try:
+    # python 2.6
+    from cPickle import dumps, loads
+except ImportError:
+    # python 3
+    from pickle import dumps, loads
 
 BUFSIZ = 8*1024
 HTMLCodes = (('&', '&amp;'),
@@ -62,7 +84,7 @@ class Site(object):
         self.isPopulated = False
 
     def populate(self, iniFile):
-        config = ConfigParser.RawConfigParser()
+        config = configparser.RawConfigParser()
         config.readfp(open(iniFile))
         self.__hosts = []
         hosts = config.get('config', 'hosts')
@@ -111,19 +133,20 @@ class WSGIConnector:
     def __iter__(self):
         response_headers = []
         length = 0
-        if self.environment.has_key("CONTENT_LENGTH") and self.environment["CONTENT_LENGTH"]:
-            length = int(self.environment["CONTENT_LENGTH"])
+        if 'CONTENT_LENGTH' in self.environment and \
+                self.environment['CONTENT_LENGTH']:
+            length = int(self.environment['CONTENT_LENGTH'])
         errors = self.environment.pop('wsgi.errors')
         
         try:        
-            if self.environment.has_key('wsgi.input'):
+            if 'wsgi.input' in self.environment:
                 wsgi_input = self.environment.pop('wsgi.input')
                 if length > 0:
                     input = wsgi_input.read(length)
                 else:
                     # chunked request
                     input = []
-                    if self.environment.has_key('HTTP_TRANSFER_ENCODING') and \
+                    if 'HTTP_TRANSFER_ENCODING' in self.environment and \
                             self.environment['HTTP_TRANSFER_ENCODING'] == 'chunked':
                         chunk_size = int('0x' + wsgi_input.readline(), 16)
                         
@@ -141,9 +164,10 @@ class WSGIConnector:
             else:
                 input = ''
 
-            if self.environment.has_key('wsgi.file_wrapper'):
+            if 'wsgi.file_wrapper' in self.environment:
                 del self.environment['wsgi.file_wrapper']
-            self.environment["PATH_INFO"] = urllib.unquote(self.environment["PATH_INFO"])
+            self.environment['PATH_INFO'] = \
+                urlparse.unquote(self.environment['PATH_INFO'])
             dct = {'if': 'WSGI',
                    'env': self.environment,
                    'inp': input}
@@ -159,9 +183,9 @@ class WSGIConnector:
                             # the ephemeral port range is exhausted
                             s.close()
                             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                            s.bind((IP_ADDR, host.port.next()))
+                            s.bind((IP_ADDR, next(host.port)))
                         else:
-                            # the host refuses conncetion
+                            # the host refuses connection
                             break
                         err = s.connect_ex(host.address)
                     else:
@@ -172,7 +196,7 @@ class WSGIConnector:
 
                 # Send our request to Porcupine Server
                 s.send(data)
-                s.shutdown(1)
+                s.shutdown(socket.SHUT_WR)
 
                 # Get the response object from Porcupine Server
                 while True:
@@ -184,10 +208,10 @@ class WSGIConnector:
                 s.close()
                 host.connections -= 1
 
-            response = ''.join(response)
+            response = b''.join(response)
             ret_code, body, headers, cookies = loads(response)
             
-            if not headers.has_key('Location'):
+            if 'Location' not in headers:
                 for header in headers.items():
                     response_headers.append(header)
                 for cookie in cookies:
