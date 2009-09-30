@@ -1,8 +1,8 @@
-"Porcupine WSGI sever based on wsgiutils"
-from wsgiutils import wsgiServer
+"Porcupine WSGI sever based on wsgiref"
+from wsgiref.simple_server import make_server
 import WSGIConnector
 
-server = wsgiServer.WSGIServer(
-    ('localhost', 1088),
-    {'/': WSGIConnector.WSGIConnector})
-server.serve_forever()
+port = 1088
+httpd = make_server('', port, WSGIConnector.application)
+print('Serving on port %d' % port)
+httpd.serve_forever()
