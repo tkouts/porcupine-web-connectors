@@ -19,6 +19,7 @@ import wsgi.WSGIConnector
 
 
 class WSGIConnectorBaseTestCase(unittest.TestCase):
+
     @staticmethod
     def create_environment(headers={'CONTENT_LENGTH': 100}):
         environ = {'PATH_INFO': '/',
@@ -65,10 +66,12 @@ class FakeSocket:
     emulate_socket_error = False
     emulate_internal_server_error = False
     recv_gen = None
+    default_socket_seq = [EADDRINUSE, 0, EISCONN]
+    default_location = 'object_id?cmd=login'
 
     def __init__(self):
-        self.gen = iter([EADDRINUSE, 0, EISCONN])
-        location = ('', 'object_id?cmd=login')[self.emulate_query]
+        self.gen = iter(FakeSocket.default_socket_seq)
+        location = ('', FakeSocket.default_location)[self.emulate_query]
 
         if FakeSocket.recv_gen is None:
             if self.emulate_redirect:

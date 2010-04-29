@@ -180,21 +180,20 @@ class WSGIConnector(object):
                 else:
                     # chunked request
                     input = []
-                    if 'HTTP_TRANSFER_ENCODING' in environment and \
-                    environment['HTTP_TRANSFER_ENCODING'] == 'chunked':
-                        chunk_size = int('0x' + \
+                    if ('HTTP_TRANSFER_ENCODING' in environment and
+                        environment['HTTP_TRANSFER_ENCODING'] == 'chunked'):
+                        chunk_size = int('0x' +
                             wsgi_input.readline().decode('utf-8'), 16)
                         while chunk_size > 0:
-                            char = wsgi_input.read(1).decode('utf-8')
-                            while char in '\r\n':
-                                char = wsgi_input.read(1).decode('utf-8')
+                            char = wsgi_input.read(1)
+                            while char in b'\r\n':
+                                char = wsgi_input.read(1)
                             input.append(char)
-                            input.append(wsgi_input.read(
-                                    chunk_size - 1).decode('utf-8'))
+                            input.append(wsgi_input.read(chunk_size - 1))
                             char = wsgi_input.read(1).decode('utf-8')
                             while char in '\r\n':
                                 char = wsgi_input.read(1).decode('utf-8')
-                            chunk_size = int('0x' + char + \
+                            chunk_size = int('0x' + char +
                                 wsgi_input.readline().decode('utf-8'), 16)
                     input = b''.join(input)
             else:
@@ -221,7 +220,7 @@ class WSGIConnector(object):
                         s.bind((self.ip_address, next(host.port)))
                         err = s.connect_ex(host.address)
                     else:
-                        # the host refuses conncetion or would block
+                        # the host refuses connection or would block
                         self.site.remove_host(host)
                         i += 1
                         # break while
@@ -262,11 +261,11 @@ class WSGIConnector(object):
                     url_scheme = environment['wsgi.url_scheme']
                     location = headers['Location']
                     if location[:len(url_scheme)] != url_scheme:
-                        location = url_scheme + '://' + \
-                                    environment['HTTP_HOST'] + location
+                        location = (url_scheme + '://' +
+                                    environment['HTTP_HOST'] + location)
 
-                    sHost = environment['HTTP_HOST'] + \
-                            environment['SCRIPT_NAME']
+                    sHost = (environment['HTTP_HOST'] +
+                             environment['SCRIPT_NAME'])
                     lstPath = location[location.index(sHost) +
                                        len(sHost):].split('?')
 
