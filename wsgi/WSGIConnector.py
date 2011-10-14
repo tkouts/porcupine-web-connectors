@@ -248,11 +248,12 @@ class WSGIConnector(object):
             response = b''.join(response)
             ret_code, body, headers, cookies = loads(response)
 
+            for cookie in cookies:
+                response_headers.append(('Set-Cookie', cookie))
+
             if 'Location' not in headers:
                 for header in headers.items():
                     response_headers.append(header)
-                for cookie in cookies:
-                    response_headers.append(('Set-Cookie', cookie))
             else:
                 # it is a redirect
                 if self.mobile_sig.search(environment['HTTP_USER_AGENT']):
