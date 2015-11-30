@@ -14,7 +14,7 @@
 #    along with Porcupine; if not, write to the Free Software
 #    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #==============================================================================
-"Porcupine WSGI connector"
+"""Porcupine WSGI connector"""
 import socket
 import sys
 import os
@@ -160,7 +160,7 @@ class WSGIConnector(object):
 
         %s</pre></p></body></html>'''
     site = Site()
-    site.populate(os.path.dirname(__file__) + '/server.ini')
+    site.populate((os.path.dirname(__file__) or '.') + '/server.ini')
 
     def __call__(self, environment, start_response):
         response_headers = []
@@ -212,7 +212,7 @@ class WSGIConnector(object):
 
             for host in iter(self.site):
                 err = s.connect_ex(host.address)
-                while err not in (0, EISCONN):
+                while err and err not in (0, EISCONN):
                     #print >> sys.stderr, "connect_ex: %d" % err
                     if err == EADDRINUSE:
                         # address already in use
